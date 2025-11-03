@@ -16,7 +16,7 @@
       ],
       "type": "a2a/generic-a2a-node",
       "typeVersion": 1,
-      "url": "https://your-deployed-url.com/api/a2a/agent/chatbot"
+      "url": "https://web-production-26ab9.up.railway.app/api/a2a/agent/chatbot"
     }
   ],
   "pinData": {},
