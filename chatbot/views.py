@@ -95,16 +95,41 @@ class A2AAgentView(APIView):
         method = body.get('method')
         params = body.get('params', {})
         
+        # Ensure params is a dict
+        if not isinstance(params, dict):
+            return Response(
+                {
+                    'jsonrpc': '2.0',
+                    'id': request_id,
+                    'error': {
+                        'code': -32602,
+                        'message': 'Invalid params: params must be an object'
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         # Extract message from params
         message_data = params.get('message', {})
-        parts = message_data.get('parts', [])
         
-        # Extract text from parts
-        user_message = ''
-        for part in parts:
-            if part.get('kind') == 'text':
-                user_message = part.get('text', '')
-                break
+        # Handle both nested message object and direct params
+        if isinstance(message_data, dict):
+            parts = message_data.get('parts', [])
+        else:
+            # Fallback: check if message is directly in params
+            parts = []
+            message_data = {}
+        
+        # Also check for direct message in params (Telex format)
+        if 'message' in params and isinstance(params['message'], str):
+            user_message = params['message']
+        else:
+            # Extract text from parts
+            user_message = ''
+            for part in parts:
+                if isinstance(part, dict) and part.get('kind') == 'text':
+                    user_message = part.get('text', '')
+                    break
         
         if not user_message:
             return Response(
@@ -120,16 +145,16 @@ class A2AAgentView(APIView):
             )
         
         # Get task and message IDs
-        task_id = message_data.get('taskId', str(uuid.uuid4()))
-        message_id = message_data.get('messageId', str(uuid.uuid4()))
-        context_id = params.get('contextId', str(uuid.uuid4()))
+        task_id = params.get('taskId') or (message_data.get('taskId') if isinstance(message_data, dict) else None) or str(uuid.uuid4())
+        message_id = (message_data.get('messageId') if isinstance(message_data, dict) else None) or str(uuid.uuid4())
+        context_id = params.get('contextId') or str(uuid.uuid4())
         
         # Process message
         result = agent.process_message(
             user_message=user_message,
             conversation_id=context_id,
-            user_id=message_data.get('userId'),
-            channel_id=message_data.get('channelId')
+            user_id=(message_data.get('userId') if isinstance(message_data, dict) else None),
+            channel_id=(message_data.get('channelId') if isinstance(message_data, dict) else None)
         )
         
         # Build JSON-RPC response in A2A format
