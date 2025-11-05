@@ -6,6 +6,7 @@ import os
 from typing import Dict, Optional, List
 from django.conf import settings
 from .models import Conversation, Message, BotResponse
+from .stock_analyzer import stock_analyzer
 
 
 class ChatAutomationAgent:
@@ -103,6 +104,47 @@ class ChatAutomationAgent:
         """
         message_lower = message.lower().strip()
         
+        # Check for natural language stock analysis requests
+        # Patterns like "analyze Tesla", "give me analysis on Apple", "what about Microsoft stock"
+        natural_stock_patterns = [
+            (r'\b(analy[sz]e|analysis on|check|look at|tell me about|what about|how is|give me analysis on)\s+([a-z]+)\b', 2),
+            (r'\b([a-z]+)\s+(stock|analysis|price|valuation)\b', 1),
+            (r'\$([A-Z]{1,5})\b', 1),  # $AAPL format
+        ]
+        
+        # Common stock names to ticker mapping
+        stock_names = {
+            'apple': 'AAPL', 'tesla': 'TSLA', 'microsoft': 'MSFT', 'google': 'GOOGL',
+            'amazon': 'AMZN', 'meta': 'META', 'facebook': 'META', 'nvidia': 'NVDA',
+            'amd': 'AMD', 'intel': 'INTC', 'netflix': 'NFLX', 'disney': 'DIS',
+            'walmart': 'WMT', 'coca-cola': 'KO', 'pepsi': 'PEP', 'nike': 'NKE',
+            'mcdonalds': 'MCD', 'boeing': 'BA', 'visa': 'V', 'mastercard': 'MA',
+            'paypal': 'PYPL', 'uber': 'UBER', 'lyft': 'LYFT', 'airbnb': 'ABNB',
+            'spotify': 'SPOT', 'zoom': 'ZM', 'salesforce': 'CRM', 'oracle': 'ORCL',
+            'ibm': 'IBM', 'cisco': 'CSCO', 'adobe': 'ADBE', 'shopify': 'SHOP',
+            'sq': 'SQ', 'square': 'SQ', 'twitter': 'X', 'snap': 'SNAP',
+            'pinterest': 'PINS', 'reddit': 'RDDT', 'coinbase': 'COIN',
+        }
+        
+        # Try natural language patterns
+        for pattern, group_idx in natural_stock_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                potential_stock = match.group(group_idx).lower().strip()
+                
+                # Check if it's a known company name
+                if potential_stock in stock_names:
+                    symbol = stock_names[potential_stock]
+                    return stock_analyzer.analyze_stock(symbol)
+                
+                # Check if it's already a ticker (2-5 uppercase letters)
+                if len(potential_stock) >= 2 and len(potential_stock) <= 5:
+                    symbol = potential_stock.upper()
+                    # Try to analyze it - if invalid, yfinance will handle it
+                    result = stock_analyzer.analyze_stock(symbol)
+                    if not result.startswith('❌'):
+                        return result
+        
         # Check database for custom patterns
         active_responses = BotResponse.objects.filter(is_active=True)
         
@@ -118,21 +160,21 @@ class ChatAutomationAgent:
                     bot_response.save()
                     return bot_response.response_text
         
-        # Built-in pattern responses
-        patterns = {
-            r'\b(hi|hello|hey|greetings)\b': "Hello! 👋 I'm your chat automation assistant. How can I help you today?",
-            r'\b(help|assist|support)\b': "I'm here to help! I can:\n• Answer common questions\n• Provide automated responses\n• Assist with general inquiries\n\nWhat do you need help with?",
-            r'\b(thanks|thank you|thx)\b': "You're welcome! Feel free to ask if you need anything else. 😊",
-            r'\b(bye|goodbye|see you)\b': "Goodbye! Have a great day! Feel free to return anytime. 👋",
-            r'\b(status|health|ping)\b': "I'm online and ready to assist! All systems operational. ✅",
-            r'\bwhat (can|do) you do\b': "I'm a chat automation bot that can:\n• Respond to common queries automatically\n• Track conversations\n• Provide helpful information\n• Learn from interactions\n\nTry asking me anything!",
+        # Built-in pattern responses for greetings and basic queries
+        greeting_patterns = {
+            r'\b(hi|hello|hey|greetings)\b': "Hello! 👋 I'm your stock analysis bot. Ask me to analyze any stock! Try: 'analyze Tesla' or 'what about Apple stock?'",
+            r'\b(help|assist|support)\b': "I'm a stock analysis bot! 📊\n\nI can:\n• Analyze any publicly traded stock\n• Calculate if stocks are undervalued\n• Provide buy/sell recommendations\n• Show key financial metrics\n\nTry: 'analyze Tesla' or 'give me analysis on Microsoft'",
+            r'\b(thanks|thank you|thx)\b': "You're welcome! Feel free to ask about more stocks anytime. 😊",
+            r'\b(bye|goodbye|see you)\b': "Goodbye! Happy investing! 📈 Feel free to return anytime. 👋",
+            r'\bwhat (can|do) you do\b': "I'm a specialized stock analysis bot! 📊\n\nI can analyze stocks and provide:\n• Current valuation metrics\n• Undervalued/overvalued assessment\n• Buy/Hold/Sell recommendations\n• Key financial ratios\n\nJust say 'analyze [company name]' or 'what about [stock ticker]'",
         }
         
-        for pattern, response in patterns.items():
+        for pattern, response in greeting_patterns.items():
             if re.search(pattern, message_lower):
                 return response
         
-        return None
+        # If no stock-related patterns matched, return stock-only message
+        return "I'm a specialized stock analysis bot. 📊 I can only analyze stocks and provide investment recommendations.\n\nTry asking me:\n• 'Analyze Tesla'\n• 'What about Apple stock?'\n• 'Give me analysis on Microsoft'\n• '$AAPL' or any stock ticker"
     
     def _generate_ai_response(self, message: str, conversation: Conversation) -> str:
         """
@@ -174,20 +216,9 @@ class ChatAutomationAgent:
     def _get_default_response(self, message: str) -> str:
         """
         Generate a default response when no pattern matches
+        Redirects users to stock analysis functionality
         """
-        responses = [
-            "I understand you're asking about: '{}'. Let me help you with that!",
-            "Thanks for your message: '{}'. I'm processing your request.",
-            "I received your message about: '{}'. How can I assist you further?",
-        ]
-        
-        # Use first few words of message in response
-        preview = ' '.join(message.split()[:5])
-        if len(message.split()) > 5:
-            preview += "..."
-        
-        import random
-        return random.choice(responses).format(preview)
+        return "I'm a specialized stock analysis bot. 📊 I can only analyze stocks and provide investment recommendations.\n\nTry asking me:\n• 'Analyze Tesla'\n• 'What about Apple stock?'\n• 'Give me analysis on Microsoft'\n• 'How is Netflix doing?'\n• Or use any stock ticker like $AAPL"
 
 
 # Singleton instance
